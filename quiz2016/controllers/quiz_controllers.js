@@ -1,3 +1,4 @@
+
 var models = require('../models');
 var Sequelize = require('sequelize');
 var cloudinary = require('cloudinary');
@@ -7,15 +8,16 @@ var fs = require('fs');
 var cloudinary_image_options = { crop: 'limit', width: 200, height: 200, radius: 5, 
                                  border: "3px_solid_blue", tags: ['core', 'quiz-2016'] };
 
+
 // Autoload el quiz asociado a :quizId
 exports.load = function(req, res, next, quizId) {
-	models.Quiz.findById(quizId, { include: [ models.Comment, models.Attachment ] })
+	 models.Quiz.findById(quizId, { include: [ models.Comment, models.Attachment] })
   		.then(function(quiz) {
       		if (quiz) {
         		req.quiz = quiz;
         		next();
       		} else { 
-      			throw new Error('No existe quizId=' + quizId);
+     			next(new Error('No existe quizId=' + quizId));
       		}
         })
         .catch(function(error) { next(error); });
@@ -36,78 +38,57 @@ exports.ownershipRequired = function(req, res, next){
     }
 };
 
-
 // GET /quizzes
 exports.index = function(req, res, next) {
-	if(req.params.format === "JSON" || req.params.format === "json" ){
-		if("search" in req.query){
-			var query = req.query.search;
-			query = query.replace(' ', '%');
-			models.Quiz.findAll({order: 'question ASC',
-								where: {question: {$like: "%" + query + "%"}},
-								include: [ models.Attachment ]
-								})
-			.then(function(quizzes) {
-				res.status(200).json({ quizzes: quizzes});
-			})
-			.catch(function(error) {
-				next(error);
-			});
-		}else{
-			models.Quiz.findAll({ include: [ models.Attachment ] })
-			.then(function(quizzes) {
-				res.status(200).json({ quizzes: quizzes});
-			})
-			.catch(function(error) {
-				next(error);
-			});
-		}
-	}else if(req.params.format === "HTML" || req.params.format === "html" || !req.params.format){
-		if("search" in req.query){
-			var query = req.query.search;
-			query = query.replace(' ', '%');
-			models.Quiz.findAll({order: 'question ASC',
-								where: {question: {$like: "%" + query + "%"}},
-								include: [ models.Attachment ]
-								})
-			.then(function(quizzes) {
-				res.render('quizzes/index.ejs', { quizzes: quizzes});
-			})
-			.catch(function(error) {
-				next(error);
-			});
-		}else{
-			models.Quiz.findAll({ include: [ models.Attachment ] })
-			.then(function(quizzes) {
-				res.render('quizzes/index.ejs', { quizzes: quizzes});
-			})
-			.catch(function(error) {
-				next(error);
-			});
-		}
-	}else{
-		res.json("Formato no válido.");
-	}
-};
+if ((req.params.format === 'html') || (!req.params.format)){ 
 
+if (req.query.search) {
+  var search = req.query.search.split(' ').join('%') ;
+       models.Quiz.findAll({include: [models.Attachment], order: 'question', where: {question: {$like : "%"+search+"%" }}})
+   .then(function(quizzes) {
+     res.render('quizzes/index.ejs', { quizzes: quizzes});
+   })
+   .catch(function(error) { 
+  next(error); 
+});
+
+ } else {
+	models.Quiz.findAll({include: [models.Attachment]}).then(function(quizzes) {
+
+			res.render('quizzes/index.ejs', { quizzes: quizzes});
+		})
+		.catch(function(error) {
+			next(error);
+		});
+}
+  } else if (req.params.format == 'json') {
+    models.Quiz.findAll().then(function(quizzes) {
+
+     res.send(JSON.stringify(quizzes));
+    })
+
+    .catch(function(error){
+      next(error);
+    });
+ } else {
+   throw new Error("Formato no válido");
+  }
+};
 
 // GET /quizzes/:id
 exports.show = function(req, res, next) {
-	if((req.params.format === "JSON" || req.params.format === "json")){
-		var answer = req.query.answer || '';
+    if ((req.params.format==='html') || (!req.params.format)) {
+        var answer = req.query.answer || '';
+        models.User.findAll({order: ['username']}).then(function(users) {
+                    res.render('quizzes/show', {quiz: req.quiz, answer: answer, users: users});
 
-		res.status(200).json( {quiz: req.quiz,
-								answer: answer});
-	}else if(req.params.format === "HTML" || req.params.format === "html" || !req.params.format){
-		var answer = req.query.answer || '';
-
-		res.render('quizzes/show', {quiz: req.quiz,
-								answer: answer});
-	}else{
-		res.json("Formato no válido.");
-	}	
+                });             
+    } else if (req.params.format === 'json') {
+        res.send(JSON.stringify(req.quiz));
+    } else {
+        throw new Error("Formato no válido")
+    }
 };
-
 
 // GET /quizzes/:id/check
 exports.check = function(req, res, next) {
@@ -120,8 +101,12 @@ exports.check = function(req, res, next) {
 								   result: result, 
 								   answer: answer });
 };
+// GET /quizzes/:id/edit
+exports.edit = function(req, res, next) {
+  var quiz = req.quiz;  // req.quiz: autoload de instancia de quiz
 
-
+  res.render('quizzes/edit', {quiz: quiz});
+};
 
 // GET /quizzes/new
 exports.new = function(req, res, next) {
@@ -129,26 +114,26 @@ exports.new = function(req, res, next) {
   res.render('quizzes/new', {quiz: quiz});
 };
 
+
 // POST /quizzes/create
 exports.create = function(req, res, next) {
-
-    var authorId = req.session.user && req.session.user.id || 0;
-    var quiz = { question: req.body.question, 
-                 answer:   req.body.answer,
+var authorId = req.session.user && req.session.user.id || 0;
+  var quiz = { question: req.body.quiz.question, 
+                answer:   req.body.quiz.answer,
                  AuthorId: authorId };
+  
 
-    // Guarda en la tabla Quizzes el nuevo quiz.
+// Guarda en la tabla Quizzes el nuevo quiz.
     models.Quiz.create(quiz)
     .then(function(quiz) {
         req.flash('success', 'Pregunta y Respuesta guardadas con éxito.');
-
-        if (!req.file) { 
-            req.flash('info', 'Es un Quiz sin imagen.');
+      
+     if (!req.file) { 
+           req.flash('info', 'Es un Quiz sin imagen.');
             return; 
-        }    
-
-        // Salvar la imagen en Cloudinary
-        return uploadResourceToCloudinary(req)
+        }   
+// Salvar la imagen en Cloudinary
+       return uploadResourceToCloudinary(req)
         .then(function(uploadResult) {
             // Crear nuevo attachment en la BBDD.
             return createAttachment(req, uploadResult, quiz);
@@ -157,7 +142,7 @@ exports.create = function(req, res, next) {
     .then(function() {
         res.redirect('/quizzes');
     })
-    .catch(Sequelize.ValidationError, function(error) {
+   .catch(Sequelize.ValidationError, function(error) {
         req.flash('error', 'Errores en el formulario:');
         for (var i in error.errors) {
             req.flash('error', error.errors[i].value);
@@ -168,24 +153,16 @@ exports.create = function(req, res, next) {
         req.flash('error', 'Error al crear un Quiz: '+error.message);
         next(error);
     }); 
+     
 };
 
-
-// GET /quizzes/:id/edit
-exports.edit = function(req, res, next) {
-  var quiz = req.quiz;  // req.quiz: autoload de instancia de quiz
-
-  res.render('quizzes/edit', {quiz: quiz});
-};
-
-
-// PUT /quizzes/:quizId
+    //PUT quizzes/:id
 exports.update = function(req, res, next) {
 
-  req.quiz.question = req.body.question;
-  req.quiz.answer   = req.body.answer;
+  req.quiz.question = req.body.quiz.question;
+  req.quiz.answer   = req.body.quiz.answer;
 
-  req.quiz.save({fields: ["question", "answer"]})
+req.quiz.save({fields: ["question", "answer"]})
     .then(function(quiz) {
 
         req.flash('success', 'Pregunta y Respuesta editadas con éxito.');
@@ -195,7 +172,7 @@ exports.update = function(req, res, next) {
             req.flash('info', 'Tenemos un Quiz sin imagen.');
             if (quiz.Attachment) {
                 cloudinary.api.delete_resources(quiz.Attachment.public_id);
-                return quiz.Attachment.destroy();
+               return quiz.Attachment.destroy();
             }
             return; 
         }  
@@ -206,7 +183,7 @@ exports.update = function(req, res, next) {
             // Actualizar el attachment en la BBDD.
             return updateAttachment(req, uploadResult, quiz);
         });
-    })            
+})            
     .then(function() {
         res.redirect('/quizzes');
     })
@@ -218,31 +195,26 @@ exports.update = function(req, res, next) {
       };
 
       res.render('quizzes/edit', {quiz: req.quiz});
-    })
+})
     .catch(function(error) {
       req.flash('error', 'Error al editar el Quiz: '+error.message);
       next(error);
     });
+  
+
 };
 
-
-// DELETE /quizzes/:quizId
+// DELETE /quizzes/:id
 exports.destroy = function(req, res, next) {
-
-    // Borrar la imagen de Cloudinary (Ignoro resultado)
-    if (req.quiz.Attachment) {
-        cloudinary.api.delete_resources(req.quiz.Attachment.public_id);
-    }
-
-    req.quiz.destroy()
-      .then( function() {
-  	  req.flash('success', 'Quiz borrado con éxito.');
-        res.redirect('/quizzes');
-      })
-      .catch(function(error){
-  	  req.flash('error', 'Error al editar el Quiz: '+error.message);
-        next(error);
-      });
+  req.quiz.destroy()
+    .then( function() {
+   req.flash('success', 'Quiz borrado con éxito.');
+      res.redirect('/quizzes');
+    })
+    .catch(function(error){
+  req.flash('error', 'Error al editar el Quiz: '+error.message);
+      next(error);
+    });
 };
 
 // FUNCIONES AUXILIARES
@@ -331,4 +303,3 @@ function uploadResourceToCloudinary(req) {
         );
     })
 }
-
